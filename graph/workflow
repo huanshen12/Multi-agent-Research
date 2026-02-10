@@ -1,0 +1,39 @@
+from langgraph.graph import StateGraph, END
+from graph.state import AgentState
+from graph.nodes import research_node, writer_node, reviewer_node
+
+def check_critique(state: AgentState):
+    """
+    检查审稿意见是否通过，若通过则结束，否则需要修改
+    """
+    if state.get("critique") == "APPROVE":
+        return "end"
+    return "rewrite"
+
+# 定义StateGraph
+workflow = StateGraph(AgentState)
+
+# 添加节点
+workflow.add_node("researcher", research_node)
+workflow.add_node("writer", writer_node)
+workflow.add_node("reviewer", reviewer_node)
+
+# 设置入口
+workflow.set_entry_point("researcher")
+
+# 添加标准边
+workflow.add_edge("researcher", "writer")
+workflow.add_edge("writer", "reviewer")
+
+# 添加条件边
+workflow.add_conditional_edges(
+    "reviewer",
+    check_critique,
+    {
+        "end": END,
+        "rewrite": "writer"
+    }
+)
+
+# 编译图
+app = workflow.compile()
