@@ -10,28 +10,47 @@ services:
       MYSQL_USER: multiagent
       MYSQL_PASSWORD: multiagent
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
       - multiagent-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   backend:
     build: .
     container_name: multiagent-backend
+    env_file:
+      - .env
     environment:
-      - database_url=mysql+aiomysql://multiagent:multiagent@mysql:3306/multiagent
-      - deepseek-api-key=${DEEPSEEK_API_KEY}
-      - deepseek-api-base=${DEEPSEEK_API_BASE}
-      - deepseek-model-name=${DEEPSEEK_MODEL_NAME}
-      - secret_key=${SECRET_KEY}
-      - algorithm=HS256
+      - DATABASE_URL=mysql+aiomysql://multiagent:multiagent@mysql:3306/multiagent
     ports:
       - "8000:8000"
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
     networks:
       - multiagent-network
+    restart: on-failure
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: multiagent-frontend
+    environment:
+      - BACKEND_URL=http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    networks:
+      - multiagent-network
+    restart: on-failure
 
 volumes:
   mysql_data:

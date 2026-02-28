@@ -1,0 +1,1759 @@
+
+
+============================================================
+📂 File: .\client_app.py
+============================================================
+
+import streamlit as st
+import requests
+import json
+
+# 设置页面配置
+st.set_page_config(page_title="Multi-Agent AI 研究员 (SSE)", layout="wide", page_icon="🤖")
+
+# API 基础 URL
+API_BASE_URL = "http://localhost:8000"
+
+# 初始化会话状态
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "token" not in st.session_state:
+    st.session_state.token = None
+if "username" not in st.session_state:
+    st.session_state.username = None
+
+def make_authenticated_request(method, endpoint, **kwargs):
+    """发送带认证的请求，自动处理 token 失效"""
+    if not st.session_state.token:
+        logout()
+        return None
+    
+    headers = kwargs.pop("headers", {})
+    headers["Authorization"] = f"Bearer {st.session_state.token}"
+    kwargs["headers"] = headers
+    
+    try:
+        response = requests.request(method, f"{API_BASE_URL}{endpoint}", **kwargs)
+        
+        if response.status_code == 401:
+            st.warning("🔐 Token 已过期或无效，请重新登录")
+            logout()
+            return None
+        
+        return response
+    except requests.exceptions.RequestException as e:
+        st.error(f"网络请求失败: {str(e)}")
+        return None
+
+def logout():
+    """登出并清除会话状态"""
+    st.session_state.logged_in = False
+    st.session_state.token = None
+    st.session_state.username = None
+    if "messages" in st.session_state:
+        del st.session_state.messages
+    st.rerun()
+
+# 登录页面
+def login_page():
+    st.title("🔐 用户登录")
+    
+    tab1, tab2 = st.tabs(["登录", "注册"])
+    
+    # 登录
+    with tab1:
+        with st.form("login_form"):
+            username = st.text_input("用户名", placeholder="请输入用户名")
+            password = st.text_input("密码", type="password", placeholder="请输入密码")
+            submit = st.form_submit_button("登录")
+            
+            if submit:
+                if not username or not password:
+                    st.error("请填写完整信息")
+                else:
+                    try:
+                        response = requests.post(
+                            f"{API_BASE_URL}/user/login",
+                            json={"username": username, "password": password}
+                        )
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            st.session_state.logged_in = True
+                            st.session_state.token = data.get("token")
+                            st.session_state.username = username
+                            st.success("登录成功！")
+                            st.rerun()
+                        else:
+                            error_data = response.json()
+                            st.error(f"登录失败: {error_data.get('detail', '未知错误')}")
+                    except Exception as e:
+                        st.error(f"连接失败: {str(e)}")
+    
+    # 注册
+    with tab2:
+        with st.form("register_form"):
+            new_username = st.text_input("用户名", placeholder="请输入用户名（8-20位）")
+            new_password = st.text_input("密码", type="password", placeholder="请输入密码（6-20位）")
+            confirm_password = st.text_input("确认密码", type="password", placeholder="请再次输入密码")
+            submit = st.form_submit_button("注册")
+            
+            if submit:
+                if not new_username or not new_password or not confirm_password:
+                    st.error("请填写完整信息")
+                elif len(new_username) < 8 or len(new_username) > 20:
+                    st.error("用户名长度必须在 8-20 位之间")
+                elif len(new_password) < 6 or len(new_password) > 20:
+                    st.error("密码长度必须在 6-20 位之间")
+                elif new_password != confirm_password:
+                    st.error("两次输入的密码不一致")
+                else:
+                    try:
+                        response = requests.post(
+                            f"{API_BASE_URL}/user/register",
+                            json={"username": new_username, "password": new_password}
+                        )
+                        
+                        if response.status_code == 200:
+                            st.success("注册成功！请切换到登录页面登录")
+                        else:
+                            error_data = response.json()
+                            st.error(f"注册失败: {error_data.get('detail', '未知错误')}")
+                    except Exception as e:
+                        st.error(f"连接失败: {str(e)}")
+
+# 主界面
+def main_page():
+    # 侧边栏
+    with st.sidebar:
+        st.title("🤖 AI 研究员")
+        
+        # 用户信息
+        st.markdown("---")
+        st.markdown("### 👤 用户信息")
+        st.info(f"**用户名**: {st.session_state.username}")
+        
+        # 登出按钮
+        if st.button("🚪 登出"):
+            logout()
+        
+        st.markdown("---")
+        
+        # 功能导航
+        st.header("功能导航")
+        page = st.radio(
+            "选择页面",
+            ["💬 新建研究", "📚 历史报告", "⚙️ 设置"],
+            label_visibility="collapsed"
+        )
+        
+        st.markdown("---")
+        st.markdown("### 关于")
+        st.info("""
+        这是一个基于 Multi-Agent 的 AI 研究助手，可以自动搜集信息、撰写报告并进行审核。
+        """)
+    
+    # 主页面
+    st.title("🤖 Multi-Agent AI 研究员 (SSE版)")
+    
+    # 根据选择的页面显示不同内容
+    if page == "💬 新建研究":
+        st.markdown("输入您的研究任务，观察 AI 代理团队如何协同工作。")
+        
+        # 初始化会话状态用于存储聊天记录
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+
+        # 显示聊天历史
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        def parse_sse_line(line):
+            """Simple parser for SSE data lines."""
+            line = line.strip()
+            if not line:
+                return None
+            if line.startswith(b"data: "):
+                data_str = line[6:].decode("utf-8")
+                if data_str == "[DONE]":
+                    return {"type": "done"}
+                try:
+                    return json.loads(data_str)
+                except json.JSONDecodeError:
+                    return None
+            return None
+
+        # 获取用户输入
+        if prompt := st.chat_input("请输入您的研究任务（例如：2025年AI发展趋势）..."):
+            # 模拟用户消息并显示
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            st.session_state.messages.append({"role": "user", "content": prompt})
+
+            # 创建助手消息容器
+            with st.spinner("AI 代理团队正在工作..."):
+                with st.chat_message("assistant"):
+                    # 创建执行历史容器
+                    with st.expander("📋 Agent 执行历史", expanded=True):
+                        history_container = st.container()
+                    
+                    # 创建占位符
+                    status_placeholder = st.empty()
+                    content_placeholder = st.empty()
+                    full_response = ""
+                    execution_history = []
+                    
+                    try: 
+                        # 发送 POST 请求并开启流式接收
+                        response = make_authenticated_request(
+                            "POST",
+                            "/report/chat/stream",
+                            json={"query": prompt},
+                            stream=True
+                        )
+                        
+                        if response and response.status_code == 200:
+                            # 循环读取流式响应
+                            for line in response.iter_lines():
+                                if line:
+                                    event_data = parse_sse_line(line)
+                                    if event_data:
+                                        msg_type = event_data.get("type")
+                                        content = event_data.get("content", "")
+                                        
+                                        if msg_type == "status":
+                                            # 添加到执行历史
+                                            execution_history.append(content)
+                                            # 更新执行历史显示
+                                            with history_container:
+                                                st.markdown("### 执行步骤")
+                                                for idx, step in enumerate(execution_history, 1):
+                                                    st.markdown(f"{idx}. {step}")
+                                            
+                                        elif msg_type == "token":
+                                            # 累加内容并显示（打字机效果）
+                                            full_response += content
+                                            # 在末尾添加光标以增强打字机效果
+                                            content_placeholder.markdown(full_response + "▌")
+                                            
+                                        elif msg_type == "error":
+                                            st.error(f"❌ 发生错误: {content}")
+                                            break
+                                            
+                                        elif msg_type == "done":
+                                            break
+                                            
+                            # 清除状态信息并展示最终结果（移除光标）
+                            status_placeholder.empty()
+                            content_placeholder.markdown(full_response)
+                            
+                            # 保存助手回复到历史记录
+                            if full_response:
+                                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                        else:
+                            st.error(f"请求失败: {response.status_code}")
+                            
+                    except Exception as e:
+                        st.error(f"连接失败: {str(e)}")
+
+    elif page == "📚 历史报告":
+        st.markdown("## 📚 历史研究报告")
+        
+        # 加载历史报告
+        with st.spinner("正在加载历史报告..."):
+            response = make_authenticated_request("GET", "/report/chat/history")
+            
+            if response and response.status_code == 200:
+                data = response.json()
+                
+                if data.get("success") and data.get("data"):
+                    reports = data["data"]
+                    
+                    if not reports:
+                        st.info("暂无历史报告，快去创建一个吧！")
+                    else:
+                        # 按创建时间倒序排列
+                        reports.sort(key=lambda x: x["created_at"] or "", reverse=True)
+                        
+                        # 显示报告列表
+                        for idx, report in enumerate(reports):
+                            report_id = report["id"]
+                            topic = report["topic"]
+                            content = report["content"]
+                            created_at = report["created_at"]
+                            
+                            # 创建一个可展开的区域
+                            with st.expander(f"📄 {topic}", expanded=False):
+                                # 显示创建时间
+                                if created_at:
+                                    st.caption(f"创建时间: {created_at}")
+                                
+                                # 显示报告内容
+                                st.markdown(content)
+                                
+                                # 添加操作按钮
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    if st.button("📋 复制内容", key=f"copy_{report_id}"):
+                                        st.code(content, language=None)
+                                        st.success("内容已显示，可以手动复制")
+                                
+                                with col2:
+                                    if st.button("🗑️ 删除报告", key=f"delete_{report_id}"):
+                                        st.warning("删除功能开发中...")
+                                
+                                st.markdown("---")
+                else:
+                    st.info("暂无历史报告")
+            elif response:
+                st.error(f"加载失败: {response.status_code}")
+
+    elif page == "⚙️ 设置":
+        st.markdown("## ⚙️ 系统设置")
+        st.info("设置功能开发中...")
+
+# 主程序
+if not st.session_state.logged_in:
+    login_page()
+else:
+    main_page()
+
+
+============================================================
+📂 File: .\main.py
+============================================================
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from config.db_conf import init_db
+from routers import report
+from models.users import User, Token
+from routers import user
+
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    await init_db()
+    print("✅ 数据库初始化完成")
+    yield
+    print("👋 应用关闭")
+
+# 初始化 FastAPI 应用
+app = FastAPI(lifespan=lifespan)
+
+app.include_router(report.router)
+app.include_router(user.router)
+
+
+
+
+
+============================================================
+📂 File: .\面试准备文档.md
+============================================================
+
+# Multi-Agent AI研究助手 - 面试准备文档
+
+## 项目概述
+
+基于LangGraph的多Agent协作系统，支持文本生成、代码生成、数据分析等多种任务类型。
+
+## 核心技术栈
+
+- **后端框架**: FastAPI + SQLAlchemy
+- **前端框架**: Streamlit
+- **AI框架**: LangChain + LangGraph
+- **数据库**: PostgreSQL
+- **认证**: JWT Token + bcrypt
+
+## 项目架构
+
+### 1. 多Agent协作系统
+
+#### Agent节点
+- **Researcher**: 搜索信息，收集资料
+- **Code Generator**: 生成代码，实现算法
+- **Data Analyst**: 分析数据，提供洞察
+- **Writer**: 撰写文章，整合内容
+- **Reviewer**: 审核内容，质量控制
+
+#### 工作流设计
+```
+用户任务
+    ↓
+Researcher (搜索)
+    ↓
+┌─────────┬──────────┬──────────┐
+│  代码   │   数据   │   标准   │
+│ 任务    │   任务   │   任务   │
+└────┬────┴────┬─────┴────┬─────┘
+     │         │          │
+Code Gen  Data Analyst  Writer
+     │         │          │
+     └─────────┴──────────┘
+              ↓
+          Writer
+              ↓
+         Reviewer
+              ↓
+      通过 → 结束
+      不通过 → Writer (重写)
+```
+
+### 2. 状态管理
+
+```python
+class AgentState(TypedDict):
+    task: str                      # 用户任务
+    task_type: str                 # 任务类型（code/data/standard）
+    search_results: List[str]      # 搜索结果
+    draft: str                     # 草稿内容
+    code: str                      # 代码内容
+    data_analysis: dict            # 数据分析结果
+    critique: str                  # 审核意见
+    revision_count: int            # 修订次数
+    messages: List[BaseMessage]    # 消息列表
+    agent_history: List[dict]      # Agent执行历史
+```
+
+### 3. 条件分支逻辑
+
+```python
+def determine_task_type(state: AgentState):
+    """根据任务内容判断任务类型"""
+    task = state.get('task', '').lower()
+    
+    code_keywords = ['代码', '编程', '算法', '函数', '实现', '写一个', '开发']
+    data_keywords = ['数据', '分析', '统计', '趋势', '报告', '图表']
+    
+    if any(keyword in task for keyword in code_keywords):
+        return "code"
+    elif any(keyword in task for keyword in data_keywords):
+        return "data"
+    else:
+        return "standard"
+```
+
+## 核心功能
+
+### 1. 智能任务路由
+- 自动识别任务类型
+- 根据任务类型选择合适的Agent
+- 支持代码生成、数据分析、文本写作
+
+### 2. 多Agent协作
+- Agent间通过State传递信息
+- 每个Agent专注特定任务
+- 支持Agent执行历史追踪
+
+### 3. 质量控制
+- 多轮审核机制
+- 自动质量评分
+- 事实核查（可扩展）
+
+### 4. 流式输出
+- Server-Sent Events (SSE)
+- 实时展示Agent执行过程
+- 打字机效果展示生成内容
+
+## 技术亮点
+
+### 1. LangGraph工作流编排
+- 使用StateGraph定义复杂工作流
+- 条件边实现动态路由
+- 支持循环和分支
+
+### 2. Prompt工程
+- 针对不同Agent设计专门的prompt
+- 使用ChatPromptTemplate管理prompt
+- 支持prompt模板化
+
+### 3. 异步处理
+- FastAPI异步路由
+- SQLAlchemy异步ORM
+- 提高系统并发能力
+
+### 4. 用户认证
+- Token-based认证
+- 密码加密存储
+- 自动token过期检测
+
+## 面试常见问题
+
+### Q1: 介绍一下你的项目架构？
+
+**A:** 
+这是一个基于LangGraph的多Agent协作系统。系统包含5个核心Agent：
+1. Researcher负责搜索信息
+2. Code Generator负责生成代码
+3. Data Analyst负责数据分析
+4. Writer负责撰写内容
+5. Reviewer负责审核质量
+
+工作流采用条件分支设计，根据任务类型自动选择不同的Agent路径。比如代码任务会走"Researcher → Code Generator → Writer → Reviewer"路径，而数据分析任务会走"Researcher → Data Analyst → Writer → Reviewer"路径。
+
+### Q2: LangGraph是如何工作的？
+
+**A:** 
+LangGraph是一个用于构建有状态、多Actor应用的库。它基于图的概念，节点代表Agent或处理步骤，边代表数据流。
+
+核心概念：
+- **StateGraph**: 定义工作流图
+- **Node**: 执行具体任务的函数
+- **Edge**: 连接节点，定义数据流向
+- **Conditional Edge**: 根据条件动态选择下一个节点
+
+我使用StateGraph定义了整个工作流，通过add_node添加Agent节点，通过add_edge和add_conditional_edges定义节点间的连接关系。
+
+### Q3: 如何处理Agent之间的状态传递？
+
+**A:** 
+通过AgentState TypedDict来管理状态。每个Agent节点接收完整的State，返回需要更新的字段。
+
+例如，Researcher节点返回search_results，Code Generator节点返回code，Writer节点返回draft。LangGraph会自动合并这些更新，传递给下一个节点。
+
+我还添加了agent_history字段，记录每个Agent的执行历史，方便调试和监控。
+
+### Q4: 如何优化prompt效果？
+
+**A:** 
+1. **角色设定**: 为每个Agent设定明确的角色和职责
+2. **结构化输出**: 要求Agent以特定格式返回结果
+3. **上下文注入**: 将搜索结果、数据分析等注入到prompt中
+4. **迭代优化**: 通过Reviewer的反馈不断改进Writer的输出
+5. **示例引导**: 在prompt中提供期望的输出示例
+
+### Q5: 如何处理长文本生成？
+
+**A:** 
+1. **流式输出**: 使用SSE实时返回生成内容
+2. **分块处理**: 将长任务分解为多个步骤
+3. **上下文管理**: 只保留必要的历史信息
+4. **Token限制**: 设置合理的max_tokens参数
+
+### Q6: 如何保证系统的可靠性？
+
+**A:** 
+1. **多轮审核**: Reviewer节点进行质量检查
+2. **限制重试**: 最多3次修订，避免无限循环
+3. **错误处理**: 每个节点都有try-catch
+4. **日志记录**: 记录Agent执行历史
+5. **事实核查**: 可以扩展事实核查Agent验证信息准确性
+
+### Q7: 如果用户量增加，如何扩展系统？
+
+**A:** 
+1. **水平扩展**: 使用负载均衡部署多个实例
+2. **缓存优化**: 缓存搜索结果，减少重复查询
+3. **异步处理**: 使用消息队列处理长时间任务
+4. **数据库优化**: 添加索引，优化查询
+5. **Agent并行**: 可以并行执行某些Agent
+
+### Q8: 如何监控和调试Agent行为？
+
+**A:** 
+1. **执行历史**: agent_history记录每个Agent的执行情况
+2. **日志输出**: 每个节点打印执行日志
+3. **状态追踪**: 可以查看完整的State变化
+4. **前端展示**: 实时展示Agent执行步骤
+5. **错误追踪**: 捕获并记录所有异常
+
+## 演示场景
+
+### 场景1: 代码生成
+**输入**: "用Python实现快速排序算法"
+
+**执行流程**:
+1. Researcher搜索快速排序相关信息
+2. Code Generator生成Python代码
+3. Writer整合代码和说明
+4. Reviewer审核代码质量
+
+**输出**: 完整的快速排序实现，包含注释和复杂度分析
+
+### 场景2: 数据分析
+**输入**: "分析2025年AI技术发展趋势"
+
+**执行流程**:
+1. Researcher搜索AI发展趋势数据
+2. Data Analyst分析数据，提取关键点
+3. Writer撰写分析报告
+4. Reviewer审核报告质量
+
+**输出**: 结构化的数据分析报告，包含趋势洞察和建议
+
+### 场景3: 文本写作
+**输入**: "写一篇关于人工智能的文章"
+
+**执行流程**:
+1. Researcher搜索AI相关信息
+2. Writer撰写文章
+3. Reviewer审核文章质量
+4. 如果需要修改，返回Writer重写
+
+**输出**: 高质量的AI主题文章
+
+## 项目收获
+
+1. **深入理解LangGraph**: 掌握了多Agent工作流的设计和实现
+2. **Prompt工程**: 学会了如何设计有效的prompt
+3. **系统设计**: 理解了如何设计复杂的多Agent系统
+4. **异步编程**: 掌握了FastAPI和SQLAlchemy的异步使用
+5. **前端开发**: 学会了使用Streamlit构建交互式界面
+
+## 未来扩展方向
+
+1. **事实核查Agent**: 验证AI输出的准确性
+2. **并行处理**: 让多个Agent同时工作，提高效率
+3. **用户偏好学习**: 根据用户反馈个性化输出
+4. **多语言支持**: 添加翻译Agent
+5. **可视化**: 为数据分析结果生成图表
+
+## 简历描述
+
+```
+项目：Multi-Agent AI研究助手
+- 设计并实现了基于LangGraph的多Agent协作系统
+- 开发了5个专业Agent（搜索、代码生成、数据分析、写作、审核）
+- 实现了条件分支工作流，支持代码生成、数据分析、文本写作等多种任务类型
+- 集成了流式输出和Agent执行历史追踪
+- 使用FastAPI + Streamlit构建完整的前后端系统
+- 实现了用户认证和权限管理
+- 通过多轮审核机制保证输出质量
+```
+
+## 技术博客大纲
+
+1. 项目背景和目标
+2. 技术选型（为什么选择LangGraph）
+3. 系统架构设计
+4. Agent设计和实现
+5. 工作流编排
+6. 状态管理
+7. 遇到的挑战和解决方案
+8. 性能优化
+9. 未来规划
+10. 总结和展望
+
+============================================================
+📂 File: .\config\db_conf.py
+============================================================
+
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+# 数据库连接配置
+
+DATABASE_URL = "mysql+aiomysql://root:123456@localhost/agent_db"
+
+engine = create_async_engine(DATABASE_URL)
+AsyncSessionLocal = sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False
+)
+Base = declarative_base()
+
+
+async def init_db():
+    """初始化数据库表"""
+    async with engine.begin() as conn:
+        # await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    print(f"已创建的表: {list(Base.metadata.tables.keys())}")
+
+async def get_db() -> AsyncSession:
+    """获取数据库会话"""
+    async with AsyncSessionLocal() as db:
+        try:
+            yield db
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+        finally:
+            await db.close()
+
+
+============================================================
+📂 File: .\crud\report.py
+============================================================
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from models.report import Report
+
+
+async def save_report(topic: str, content: str, db: AsyncSession, user_id: int):
+    """保存报告到数据库"""
+    report = Report(topic=topic, content=content, user_id=user_id)
+    db.add(report)
+    await db.commit()
+    await db.refresh(report)
+    return report
+
+async def get_history_report_list(db: AsyncSession, user_id: int, report_id: int = None):
+    """根据用户ID获取历史报告列表"""
+    if report_id:
+        result = await db.execute(
+            select(Report).where(
+                Report.user_id == user_id,
+                Report.id == report_id
+            )
+        )
+    else:
+        result = await db.execute(
+            select(Report).where(Report.user_id == user_id).order_by(Report.created_at.desc())
+        )
+    return result.scalars().all()
+
+async def get_all_topics(db: AsyncSession, user_id: int):
+    """获取所有报告的标题（topic）"""
+    result = await db.execute(
+        select(Report.topic).where(Report.user_id == user_id).order_by(Report.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+============================================================
+📂 File: .\crud\user.py
+============================================================
+
+import uuid
+from datetime import datetime, timedelta
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.users import User, Token
+from schema.user import LoginRequest, RegisterRequest
+from utils.security import hash_password, verify_password
+
+
+async def get_user_by_username(username: str, db: AsyncSession):
+    """根据用户名查询用户"""
+    result = await db.execute(select(User).where(User.username == username))
+    return result.scalar_one_or_none()
+
+async def create_user(request: RegisterRequest, db: AsyncSession):
+    """创建用户"""
+    password = hash_password(request.password)
+    new_user = User(
+    username=request.username,
+    password=password  
+    )
+    db.add(new_user)
+    await db.commit()
+    return {"msg": "用户注册成功"}
+
+async def login_user(request: LoginRequest, db: AsyncSession):
+    """用户登录"""
+    user = await get_user_by_username(request.username, db)
+    if not user:
+        raise HTTPException(status_code=400, detail="用户名不存在")
+    if not verify_password(request.password, user.password):
+        raise HTTPException(status_code=400, detail="密码错误")
+    
+    token = uuid.uuid4().hex
+    expires_at = datetime.now() + timedelta(days=7)
+    
+    new_token = Token(
+        token=token,
+        user_id=user.id,
+        expires_at=expires_at
+    )
+    
+    db.add(new_token)
+    await db.commit()
+    
+    return {"msg": "登录成功", "token": token}
+
+async def get_current_user(token: str, db: AsyncSession):
+    """根据token获取当前用户"""
+    result = await db.execute(select(Token).where(Token.token == token))
+    token_obj = result.scalar_one_or_none()
+    if not token_obj:
+        raise HTTPException(status_code=401, detail="token不存在")
+    if token_obj.expires_at < datetime.now():
+        raise HTTPException(status_code=401, detail="token已过期")
+    result = await db.execute(select(User).where(User.id == token_obj.user_id))
+    token_obj.expires_at = datetime.now() + timedelta(days=7)
+    await db.commit()
+    return result.scalar_one_or_none()
+
+
+============================================================
+📂 File: .\graph\state.py
+============================================================
+
+import operator
+from typing import TypedDict, Annotated, List, Union
+from langchain_core.messages import BaseMessage
+
+class AgentState(TypedDict):
+    """
+    为多agent工作流创建state
+    """
+    task: str                      #用户提出的任务                                                                                                                                                                                                           
+    task_type: str                 #任务类型（code/data/standard）
+    search_results: List[str]      #搜索工具返回的结果
+    draft: str                     #草稿内容
+    code: str                      #代码内容
+    data_analysis: dict            #数据分析结果
+    critique: str                  #审稿提出的意见
+    revision_count: int            #修订次数
+    messages: Annotated[List[BaseMessage], operator.add]   #消息列表，用于存储所有交互消息
+    agent_history: List[dict]      #Agent执行历史
+
+
+============================================================
+📂 File: .\graph\workflow.py
+============================================================
+
+from functools import lru_cache
+from langgraph.graph import StateGraph, END
+from graph.state import AgentState
+from nodes.research import research_node
+from nodes.code_generator import code_generator_node
+from nodes.data_analyst import data_analyst_node
+from nodes.write import writer_node
+from nodes.reviewer import reviewer_node
+from utils.my_llm import llm
+from langchain_core.prompts import ChatPromptTemplate
+
+@lru_cache(maxsize=128)
+def determine_task_type_cached(task:str):
+    """
+    使用 LLM 识别任务类型
+    返回: 'code' | 'data' | 'standard'
+    """
+    
+    prompt = ChatPromptTemplate.from_template("""请分析以下任务，判断它属于哪种类型。
+
+任务：{task}
+
+类型定义：
+- code：涉及代码编写、算法实现、编程、函数开发等
+-  data：涉及数据分析、统计、趋势分析、图表制作、可视化等
+- standard：普通文章写作、内容创作、知识总结等
+
+只返回类型名称（code/data/standard），不要其他内容。""")
+    
+    chain = prompt | llm
+    response = chain.invoke({"task": task})
+    
+    task_type = response.content.strip().lower()
+    
+    # 确保返回的是有效类型
+    if task_type not in ['code', 'data', 'standard']:
+        task_type = 'standard'
+    
+    return task_type
+
+def determine_task_type(state: AgentState):
+    """
+    包装缓存函数，用于LangGraph调用
+    """
+    task = state.get('task', '')
+    return determine_task_type_cached(task)
+    
+def check_critique(state: AgentState):
+    """
+    检查审稿意见是否通过，若通过则结束，否则需要修改
+    """
+    if state.get("critique") == "APPROVE":
+        return "end"
+    return "rewrite"
+
+# 创建高级工作流
+workflow = StateGraph(AgentState)
+
+# 添加节点
+workflow.add_node("researcher", research_node)
+workflow.add_node("writer", writer_node)
+workflow.add_node("reviewer", reviewer_node)
+workflow.add_node("code_generator", code_generator_node)
+workflow.add_node("data_analyst", data_analyst_node)
+
+# 设置入口
+workflow.set_entry_point("researcher")
+
+# 添加条件边：根据任务类型选择不同路径
+workflow.add_conditional_edges(
+    "researcher",
+    determine_task_type,
+    {
+        "code": "code_generator",    # 代码任务 → 代码生成Agent
+        "data": "data_analyst",      # 数据任务 → 数据分析Agent
+        "standard": "writer"         # 标准任务 → 写作Agent
+    }
+)
+
+# 代码生成路径
+workflow.add_edge("code_generator", "writer")
+
+# 数据分析路径
+workflow.add_edge("data_analyst", "writer")
+
+# 写作 → 审核
+workflow.add_edge("writer", "reviewer")
+
+# 审核结果：通过或重写
+workflow.add_conditional_edges(
+    "reviewer",
+    check_critique,
+    {
+        "end": END,
+        "rewrite": "writer"
+    }
+)
+
+# 编译图
+app = workflow.compile()
+
+
+============================================================
+📂 File: .\models\report.py
+============================================================
+
+from datetime import datetime
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+from config.db_conf import Base
+from models.users import User
+
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    id:Mapped[int] = mapped_column(Integer, autoincrement=True, primary_key=True, index=True)
+    user_id:Mapped[int] = mapped_column(Integer, ForeignKey(User.id),index=True)
+    topic:Mapped[str] = mapped_column(String(255), index=True)
+    content:Mapped[str] = mapped_column(Text)
+    created_at:Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+============================================================
+📂 File: .\models\users.py
+============================================================
+
+from datetime import datetime
+from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
+from config.db_conf import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, autoincrement=True, primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    password: Mapped[str] = mapped_column(String(255))
+
+class Token(Base):
+    __tablename__ = "tokens"
+
+    id: Mapped[int] = mapped_column(Integer, autoincrement=True, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey(User.id), index=True)
+    token: Mapped[str] = mapped_column(String(255))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+
+============================================================
+📂 File: .\nodes\code_generator.py
+============================================================
+
+from datetime import datetime
+
+from langchain_core.prompts import ChatPromptTemplate
+from utils.my_llm import llm
+from graph.state import AgentState
+from utils.content_cleaner import clean_code_output
+
+
+def code_generator_node(state: AgentState):
+    """
+    代码生成节点:根据任务生成代码
+    """
+    print("--- Code Generator: 正在生成代码 ---")
+    
+    task = state.get('task', '')
+    search_results = state.get('search_results', [])
+    
+    prompt_text = """你是一名资深软件工程师。请根据以下任务生成Python代码。
+
+任务：{task}
+
+参考资料：
+{search_results}
+
+要求：
+1. 生成完整、可运行的代码
+2. 添加必要的注释
+3. 包含错误处理
+4. 包含使用示例
+5. 代码风格符合最佳实践
+6. 如果是算法题，在注释中提供时间复杂度分析
+"""
+    
+    prompt = ChatPromptTemplate.from_template(prompt_text)
+    chain = prompt | llm
+    
+    response = chain.invoke({
+        "task": task,
+        "search_results": "\n".join(search_results)
+    })
+    
+    code = response.content
+    
+    # 后处理清理
+    code = clean_code_output(code)
+    
+    # 记录Agent执行历史
+    history = state.get('agent_history', [])
+    history.append({
+        "agent": "code_generator",
+        "action": "generate_code",
+        "timestamp": datetime.now().isoformat(),
+        "input": task,
+        "code_length": len(code)
+    })
+    
+    return {"code": code, "draft": code, "agent_history": history}
+
+============================================================
+📂 File: .\nodes\data_analyst.py
+============================================================
+
+from datetime import datetime
+from langchain_core.prompts import ChatPromptTemplate
+
+from graph.state import AgentState
+from utils.my_llm import llm
+
+
+def data_analyst_node(state: AgentState):
+    """
+    数据分析节点:分析搜索结果中的数据
+    """
+    print("--- Data Analyst: 正在分析数据 ---")
+    
+    task = state.get('task', '')
+    search_results = state.get('search_results', [])
+    
+    prompt_text = """你是一名数据分析师。请分析以下信息中的数据。
+
+任务：
+{task}
+
+信息：
+{search_results}
+
+要求：
+1. 识别关键数据点
+2. 提供统计分析
+3. 生成数据洞察
+4. 如果可能，建议可视化方式
+5. 直接输出分析报告，不要输出JSON格式
+6. 以Markdown格式输出，包含标题、关键点、建议等
+
+输出格式示例：
+# 数据分析报告
+
+## 总结
+（总结内容）
+
+## 关键数据点
+1. 数据点1
+2. 数据点2
+
+## 洞察和建议
+（洞察和建议内容）
+"""
+    
+    prompt = ChatPromptTemplate.from_template(prompt_text)
+    chain = prompt | llm
+    
+    response = chain.invoke({
+        "task": task,
+        "search_results": "\n".join(search_results)
+    })
+    
+    analysis_report = response.content
+    
+    # 记录Agent执行历史
+    history = state.get('agent_history', [])
+    history.append({
+        "agent": "data_analyst",
+        "action": "analyze_data",
+        "timestamp": datetime.now().isoformat(),
+        "input": task,
+        "report_length": len(analysis_report)
+    })
+    
+    # 数据分析任务：直接返回分析报告作为draft
+    return {"data_analysis": {"report": analysis_report}, "draft": analysis_report, "agent_history": history}
+
+
+============================================================
+📂 File: .\nodes\research.py
+============================================================
+
+from datetime import datetime
+from graph.state import AgentState
+from utils.agent_tools import tavily_search
+from utils.content_cleaner import clean_search_query
+
+
+def research_node(state: AgentState):
+    """
+    搜索节点:通过搜索工具来获取信息
+    """
+    print("--- Researcher: 正在搜索信息 ---")
+    task = state.get('task', '')
+    
+    # 清理搜索查询
+    search_query = clean_search_query(task)
+    
+    print(f"搜索查询: {search_query}")
+    
+    results = tavily_search.invoke(search_query)
+    
+    # 记录Agent执行历史
+    history = state.get('agent_history', [])
+    history.append({
+        "agent": "researcher",
+        "action": "search",
+        "timestamp": datetime.now().isoformat(),
+        "input": task,
+        "search_query": search_query,
+        "output_count": len(results)
+    })
+    
+    return {"search_results": results, "agent_history": history}
+
+============================================================
+📂 File: .\nodes\reviewer.py
+============================================================
+
+from datetime import datetime
+
+from langchain_core.prompts import ChatPromptTemplate
+
+from graph.state import AgentState
+from utils.my_llm import llm
+
+
+def reviewer_node(state: AgentState):
+    """
+    审核节点:根据草稿内容和任务要求进行审核
+    """
+    print("--- Reviewer: 正在审核 ---")
+    
+    draft = state.get('draft', '')
+    task = state.get('task', '')
+    search_results = state.get('search_results', [])
+    revision_count = state.get('revision_count', 0)
+
+    # Allow maximum 3 revisions to prevent infinite loops
+    if revision_count >= 3:
+        print("--- Reviewer: 达到最大修改次数，强制通过 ---")
+        
+        # 记录Agent执行历史
+        history = state.get('agent_history', [])
+        history.append({
+            "agent": "reviewer",
+            "action": "review",
+            "timestamp": datetime.now().isoformat(),
+            "result": "force_approve",
+            "reason": "max_revisions_reached"
+        })
+        
+        return {"critique": "APPROVE", "agent_history": history}
+    
+    prompt_text = """你是一名严格的主编。请审核以下关于 "{task}" 的文章草稿。
+
+参考资料：
+{search_results}
+
+草稿内容：
+{draft}
+
+要求：
+1. 根据用户要求和检索到的参考资料检查草稿内容是否充实，逻辑是否严密。
+2. 如果文章质量合格，请只输出 "APPROVE" (不带引号)。
+3. 如果需要修改，请给出具体的修改建议（critique），不要太长，直接指出问题。
+"""
+    
+    prompt = ChatPromptTemplate.from_template(prompt_text)
+    chain = prompt | llm
+    
+    response = chain.invoke({
+        "task": task,
+        "draft": draft,
+        "search_results": "\n".join(search_results)
+    })
+    
+    critique = response.content.strip()
+    
+    # Simple check if LLM approved it
+    if "APPROVE" in critique:
+        result = "APPROVE"
+    else:
+        result = critique
+    
+    # 记录Agent执行历史
+    history = state.get('agent_history', [])
+    history.append({
+        "agent": "reviewer",
+        "action": "review",
+        "timestamp": datetime.now().isoformat(),
+        "result": result,
+        "revision_count": revision_count
+    })
+    
+    return {"critique": result, "agent_history": history}
+
+
+============================================================
+📂 File: .\nodes\write.py
+============================================================
+
+from datetime import datetime
+import json
+from langchain_core.prompts import ChatPromptTemplate
+from graph.state import AgentState
+from utils.my_llm import llm
+from utils.content_cleaner import clean_article_output
+
+
+def writer_node(state: AgentState):
+    """
+    写节点:根据搜索内容和修改意见撰写草稿
+    """
+    print("--- Writer: 正在撰写草稿 ---")
+    
+    current_revision = state.get('revision_count', 0)
+    new_revision_count = current_revision + 1
+    
+    task = state.get('task', '')
+    search_results = state.get('search_results', [])
+    critique = state.get('critique', '')
+    data_analysis = state.get('data_analysis', {})
+    code = state.get('code', '')
+
+    prompt_text = """你是一名专业的技术撰稿人。请根据以下信息撰写一篇技术文章。
+
+任务：{task}
+
+参考资料：
+{search_results}
+
+要求：
+1. 文章主题围绕任务：{task}
+2. 内容基于搜索结果，进行整合和扩展
+3. 语言通顺，逻辑清晰，结构完整
+4. 使用markdown格式
+5. 这是第 {revision_count} 版草稿
+"""
+    
+    # 如果有代码，添加说明
+    if code:
+        prompt_text += """
+
+注意：已有相关代码实现，请在文章中适当展示代码，使用markdown代码块格式（```python ... ```）。
+"""
+    
+    if critique:
+        prompt_text += f"""
+
+上一版的审核意见：{critique}
+"""
+        
+    prompt = ChatPromptTemplate.from_template(prompt_text)
+    chain = prompt | llm
+    
+    # 准备参数
+    invoke_params = {
+        "task": task,
+        "search_results": "\n".join(search_results),
+        "revision_count": new_revision_count,
+        "critique": critique
+    }
+    
+    response = chain.invoke(invoke_params)
+    
+    # 后处理清理
+    draft = clean_article_output(response.content)
+    
+    # 记录Agent执行历史
+    history = state.get('agent_history', [])
+    history.append({
+        "agent": "writer",
+        "action": "write_draft",
+        "timestamp": datetime.now().isoformat(),
+        "input": task,
+        "revision": new_revision_count,
+        "draft_length": len(draft)
+    })
+    
+    return {
+        "draft": draft,
+        "revision_count": new_revision_count,
+        "agent_history": history
+    }
+
+
+============================================================
+📂 File: .\routers\report.py
+============================================================
+
+import json
+from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import StreamingResponse
+from config.db_conf import get_db
+from crud.report import save_report
+from crud.report import get_history_report_list
+from crud.user import get_current_user
+from models.users import User
+from schema.report import ChatRequest
+from graph.workflow import app as workflow_app
+
+
+router = APIRouter(prefix="/report/chat",tags=["报告"])
+
+async def get_token_from_header(authorization: str = Header(...)):
+    """从请求头中提取 token"""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="无效的认证格式")
+    return authorization[7:]
+
+async def get_current_user_dependency(
+    token: str = Depends(get_token_from_header),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取当前用户（依赖注入版本）"""
+    return await get_current_user(token, db)
+
+@router.post("/stream")
+async def chat_stream(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user_dependency),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    使用 Server-Sent Events (SSE) 流式返回生成结果，并保存到数据库
+    """
+    
+    async def event_generator():
+        task = request.query
+        print(f"收到用户任务: {task}")
+        
+        # 发送初始状态
+        yield f"data: {json.dumps({'type': 'status', 'content': '任务已接收，正在启动工作流...'}, ensure_ascii=False)}\n\n"
+        
+        # 初始化状态
+        initial_state = {
+            "task": task,
+            "revision_count": 0,
+            "search_results": [],
+            "messages": []
+        }
+        
+        final_state = None
+        current_draft_content = ""
+        
+        try:
+            # 使用 astream_events 允许细粒度的事件流式传输
+            async for event in workflow_app.astream_events(initial_state, version="v2"):
+                kind = event["event"]
+                name = event.get("name", "")
+                
+                # --- 处理 LangGraph 节点开始事件 ---
+                if kind == "on_chain_start":
+                    if name == "researcher":
+                        yield f"data: {json.dumps({'type': 'status', 'content': '🔍 研究员正在搜集信息...'}, ensure_ascii=False)}\n\n"
+                    elif name == "code_generator":
+                        yield f"data: {json.dumps({'type': 'status', 'content': '💻 代码生成器正在编写代码...'}, ensure_ascii=False)}\n\n"
+                    elif name == "data_analyst":
+                        yield f"data: {json.dumps({'type': 'status', 'content': '📊 数据分析师正在分析数据...'}, ensure_ascii=False)}\n\n"
+                    elif name == "writer":
+                        yield f"data: {json.dumps({'type': 'status', 'content': '✍️ 撰稿人正在撰写初稿...'}, ensure_ascii=False)}\n\n"
+                        # 重置当前草稿内容（新的一版）
+                        current_draft_content = ""
+                    elif name == "reviewer":
+                        yield f"data: {json.dumps({'type': 'status', 'content': '👀 审稿人正在审核文章...'}, ensure_ascii=False)}\n\n"
+                
+                # --- 处理 LLM 的流式输出 ---
+                elif kind == "on_chat_model_stream":
+                    data = event["data"]
+                    chunk = data.get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        content_chunk = chunk.content
+                        # 如果是 Writer 节点，收集草稿内容
+                        if name == "writer":
+                            current_draft_content += content_chunk
+                        yield f"data: {json.dumps({'type': 'token', 'content': content_chunk}, ensure_ascii=False)}\n\n"
+                        
+                # --- 处理工具结束事件 ---
+                elif kind == "on_tool_end":
+                    yield f"data: {json.dumps({'type': 'status', 'content': '✅ 搜索完成，正在整理结果...'}, ensure_ascii=False)}\n\n"
+
+            # 工作流结束
+            yield f"data: {json.dumps({'type': 'status', 'content': '🎉 工作流执行完毕！'}, ensure_ascii=False)}\n\n"
+            
+            # 保存最终草稿到数据库（只保存最后一版）
+            if current_draft_content:
+                try:
+                    await save_report(topic=task, content=current_draft_content, db=db, user_id=current_user.id)
+                    yield f"data: {json.dumps({'type': 'status', 'content': '💾 报告已保存到数据库'}, ensure_ascii=False)}\n\n"
+                except Exception as db_e:
+                    print(f"数据库保存失败: {db_e}")
+                    yield f"data: {json.dumps({'type': 'error', 'content': f'数据库保存失败: {str(db_e)}'}, ensure_ascii=False)}\n\n"
+
+            yield "data: [DONE]\n\n"
+            
+        except Exception as e:
+            print(f"发生错误: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@router.get("/history")
+async def get_history_reports(
+    current_user: User = Depends(get_current_user_dependency),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取历史报告列表
+    """
+    reports = await get_history_report_list(db, current_user.id)
+    return {
+        "success": True,
+        "message": "历史报告列表获取成功",
+        "data": [
+            {
+                "id": report.id,
+                "topic": report.topic,
+                "content": report.content,
+                "created_at": report.created_at.isoformat() if report.created_at else None
+            }
+            for report in reports
+        ]
+    }
+
+@router.get("/history/{report_id}")
+async def get_report_detail(
+    report_id: int,
+    current_user: User = Depends(get_current_user_dependency),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取单个报告的详细信息
+    """
+    reports = await get_history_report_list(db, current_user.id)
+    for report in reports:
+        if report.id == report_id:
+            return {
+                "success": True,
+                "data": {
+                    "id": report.id,
+                    "topic": report.topic,
+                    "content": report.content,
+                    "created_at": report.created_at.isoformat() if report.created_at else None
+                }
+            }
+    return {"success": False, "message": "报告不存在"}
+
+============================================================
+📂 File: .\routers\user.py
+============================================================
+
+from fastapi import APIRouter, Depends, HTTPException, Header
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from config.db_conf import get_db
+from crud.user import create_user, get_user_by_username, login_user, get_current_user
+from models.users import User
+from schema.user import LoginRequest, RegisterRequest
+from utils.security import verify_password
+
+
+router = APIRouter(prefix="/user", tags=["用户"])
+
+async def get_token_from_header(authorization: str = Header(...)):
+    """从请求头中提取 token"""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="无效的认证格式")
+    return authorization[7:]
+
+@router.post("/register")
+async def register_user(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    """用户注册"""
+    user = await get_user_by_username(request.username, db)
+    if user:
+        raise HTTPException(status_code=400, detail="用户名已存在")
+    await create_user(request, db)
+    return {"msg": "用户注册成功"}
+
+@router.post("/login")
+async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """用户登录"""
+    user = await login_user(request, db)
+    if not user:
+        raise HTTPException(status_code=400, detail="用户名或密码错误")
+    return {"msg": "登录成功", "token": user["token"]}
+
+@router.get("/me")
+async def get_current_user_info(
+    token: str = Depends(get_token_from_header),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取当前用户信息"""
+    current_user = await get_current_user(token, db)
+    return {
+        "id": current_user.id,
+        "username": current_user.username
+    }
+
+
+============================================================
+📂 File: .\schema\report.py
+============================================================
+
+from pydantic import BaseModel
+
+class ChatRequest(BaseModel):
+    query: str
+
+============================================================
+📂 File: .\schema\user.py
+============================================================
+
+from pydantic import BaseModel, Field
+
+
+class RegisterRequest(BaseModel):
+    username: str  = Field(..., min_length=8, max_length=20, description="用户名")
+    password: str  = Field(..., min_length=6, max_length=20, description="密码")
+
+class LoginRequest(BaseModel):
+    username: str  = Field(..., min_length=8, max_length=20, description="用户名")
+    password: str  = Field(..., min_length=6, max_length=20, description="密码")
+
+============================================================
+📂 File: .\utils\agent_tools.py
+============================================================
+
+from langchain_core.tools import tool
+from zai import ZhipuAiClient
+import os
+import dotenv
+dotenv.load_dotenv()
+
+client = ZhipuAiClient(api_key=os.getenv("zhipu-api-key"))
+
+
+@tool
+def tavily_search(query: str) -> list[str]:
+    """
+    使用数据进行搜索。
+    在生产环境中，应在此处实现真实的搜索逻辑。
+    """
+    try:
+        response = client.web_search.web_search(
+        search_engine="search_std",
+        search_query=query,
+        count=5,  # 返回结果的条数，范围1-50，默认5
+        search_domain_filter=None,  # 只访问指定域名的内容
+        search_recency_filter="noLimit",  # 搜索指定日期范围内的内容
+        content_size="low"  # 控制网页摘要的字数，默认medium
+        )
+        result = []
+        for res in response.search_result:
+            result.append(res.content)
+        print(result)
+        return result
+    except Exception as exc:
+        print(f"error: {str(exc)}")
+    # print(f"正在执行模拟搜索：{query}")
+    
+    # # 模拟返回数据：关于 "2025 AI 发展趋势" 的三条假新闻
+    # return [
+    #     "1. 到2025年，Agentic AI（代理AI）将成为主流，自主Agent在无需人类干预的情况下处理复杂工作流。",
+    #     "2. 由于专用硬件的突破，LLM 推理成本下降了90%，使得在边缘设备上进行本地部署成为可能。",
+    #     "3. 多模态模型实现了近乎完美的推理能力，彻底改变了科学研究的自动化进程。"
+    # ]
+
+
+============================================================
+📂 File: .\utils\content_cleaner.py
+============================================================
+
+import re
+
+
+def clean_code_output(code: str) -> str:
+    """
+    清理代码生成器的输出
+    
+    Args:
+        code: 原始代码输出
+        
+    Returns:
+        清理后的代码
+    """
+    # 移除开头的markdown标记
+    code = re.sub(r'^```python\s*\n', '', code, flags=re.MULTILINE)
+    code = re.sub(r'^```\s*\n', '', code, flags=re.MULTILINE)
+    
+    # 移除结尾的markdown标记
+    code = re.sub(r'\n```$', '', code)
+    code = re.sub(r'\n```\s*$', '', code)
+    
+    # 移除开头的执行说明
+    code = re.sub(r'^要运行此代码.*?\n', '', code, flags=re.MULTILINE)
+    code = re.sub(r'^运行方式.*?\n', '', code, flags=re.MULTILINE)
+    code = re.sub(r'^使用方法.*?\n', '', code, flags=re.MULTILINE)
+    
+    # 移除开头的空行
+    code = code.lstrip('\n')
+    
+    return code
+
+
+def clean_article_output(article: str) -> str:
+    """
+    清理文章生成器的输出
+    
+    Args:
+        article: 原始文章输出
+        
+    Returns:
+        清理后的文章
+    """
+    # 移除开头的执行说明
+    article = re.sub(r'^要运行此代码.*?\n', '', article, flags=re.MULTILINE)
+    article = re.sub(r'^运行方式.*?\n', '', article, flags=re.MULTILINE)
+    article = re.sub(r'^使用方法.*?\n', '', article, flags=re.MULTILINE)
+    article = re.sub(r'^保存为.*?\n', '', article, flags=re.MULTILINE)
+    
+    # 确保代码块正确闭合
+    # 查找未闭合的代码块
+    code_blocks = re.findall(r'```python\n(.*?)\n```', article, re.DOTALL)
+    open_blocks = len(re.findall(r'```python', article))
+    close_blocks = len(re.findall(r'```', article)) - open_blocks
+    
+    # 如果有未闭合的代码块，尝试修复
+    if open_blocks > close_blocks:
+        article += '\n```'
+    
+    # 移除开头的空行
+    article = article.lstrip('\n')
+    
+    return article
+
+
+def clean_search_query(query: str) -> str:
+    """
+    清理搜索查询，提取核心关键词
+    
+    Args:
+        query: 原始任务描述
+        
+    Returns:
+        清理后的搜索查询
+    """
+    # 移除常见的前缀
+    prefixes = ['写一篇', '撰写', '关于', '分析', '实现', '开发', '生成', '帮我', '请', '用']
+    for prefix in prefixes:
+        if query.startswith(prefix):
+            query = query[len(prefix):]
+            break
+    
+    # 移除常见的后缀
+    suffixes = ['的文章', '的报告', '的内容', '的代码', '的算法', '的程序']
+    for suffix in suffixes:
+        if query.endswith(suffix):
+            query = query[:-len(suffix)]
+            break
+    
+    # 清理标点符号
+    query = query.strip()
+    query = query.rstrip('？?。.！!')
+    
+    return query
+
+
+def fix_fstring_issues(code: str) -> str:
+    """
+    修复 f-string 中的语法问题
+    
+    Args:
+        code: 原始代码
+        
+    Returns:
+        修复后的代码
+    """
+    # 查找所有 f-string
+    pattern = r'f"([^"]*?\{[^}]*\}[^"]*?)"'
+    
+    def fix_fstring(match):
+        content = match.group(1)
+        # 检查是否包含复杂表达式
+        if re.search(r'\{[^}]*[.()[\]]', content):
+            # 提取变量名
+            variables = re.findall(r'\{([^}]+)\}', content)
+            # 生成修复后的代码
+            result = []
+            for var in variables:
+                # 如果是简单变量，保留
+                if not re.search(r'[.()[\]]', var):
+                    result.append(f'{{{var}}}')
+                else:
+                    # 复杂表达式，需要先赋值
+                    var_name = re.sub(r'[^a-zA-Z0-9_]', '_', var)
+                    result.append(f'{{{var_name}}}')
+            return f'f"{" ".join(result)}"'
+        return match.group(0)
+    
+    return re.sub(pattern, fix_fstring, code)
+
+
+============================================================
+📂 File: .\utils\my_llm.py
+============================================================
+
+import os 
+import dotenv
+from langchain_openai import ChatOpenAI
+
+dotenv.load_dotenv()
+
+
+llm = ChatOpenAI(model=os.getenv("deepseek-model-name"),
+                 api_key=os.getenv("deepseek-api-key"),
+                 base_url=os.getenv("deepseek-api-base"),
+                 temperature=0.5)
+
+
+
+============================================================
+📂 File: .\utils\security.py
+============================================================
+
+from passlib.context import CryptContext
+
+
+bcrypt_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return bcrypt_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt_context.verify(plain_password, hashed_password)

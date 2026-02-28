@@ -29,8 +29,4 @@ def research_node(state: AgentState):
         "output_count": len(results)
     })
     
-<<<<<<< HEAD
     return {"search_results": results, "agent_history": history}
-=======
-    return {"search_results": results, "agent_history": history}
->>>>>>> 904fced4bb476c788822e27e54df29628f8ac02e

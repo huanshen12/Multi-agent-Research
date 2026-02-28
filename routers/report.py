@@ -59,6 +59,7 @@ async def chat_stream(
             async for event in workflow_app.astream_events(initial_state, version="v2"):
                 kind = event["event"]
                 name = event.get("name", "")
+                metadata = event.get("metadata", {})
                 
                 # --- 处理 LangGraph 节点开始事件 ---
                 if kind == "on_chain_start":
@@ -81,8 +82,10 @@ async def chat_stream(
                     chunk = data.get("chunk")
                     if chunk and hasattr(chunk, "content") and chunk.content:
                         content_chunk = chunk.content
+                        # 从 metadata 中获取节点名称
+                        node_name = metadata.get("checkpoint_ns", "")
                         # 如果是 Writer 节点，收集草稿内容
-                        if name == "writer":
+                        if "writer" in node_name.lower():
                             current_draft_content += content_chunk
                         yield f"data: {json.dumps({'type': 'token', 'content': content_chunk}, ensure_ascii=False)}\n\n"
                         
@@ -100,6 +103,8 @@ async def chat_stream(
                     yield f"data: {json.dumps({'type': 'status', 'content': '💾 报告已保存到数据库'}, ensure_ascii=False)}\n\n"
                 except Exception as db_e:
                     print(f"数据库保存失败: {db_e}")
+                    import traceback
+                    traceback.print_exc()
                     yield f"data: {json.dumps({'type': 'error', 'content': f'数据库保存失败: {str(db_e)}'}, ensure_ascii=False)}\n\n"
 
             yield "data: [DONE]\n\n"
@@ -154,8 +159,4 @@ async def get_report_detail(
                     "created_at": report.created_at.isoformat() if report.created_at else None
                 }
             }
-<<<<<<< HEAD
     return {"success": False, "message": "报告不存在"}
-=======
-    return {"success": False, "message": "报告不存在"}
->>>>>>> 904fced4bb476c788822e27e54df29628f8ac02e

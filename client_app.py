@@ -1,12 +1,13 @@
 import streamlit as st
 import requests
 import json
+import os
 
 # 设置页面配置
 st.set_page_config(page_title="Multi-Agent AI 研究员 (SSE)", layout="wide", page_icon="🤖")
 
-# API 基础 URL
-API_BASE_URL = "http://localhost:8000"
+# API 基础 URL - 从环境变量读取，默认使用 localhost
+API_BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 # 初始化会话状态
 if "logged_in" not in st.session_state:
