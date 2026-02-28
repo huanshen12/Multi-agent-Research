@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: multiagent-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: multiagent
+      MYSQL_USER: multiagent
+      MYSQL_PASSWORD: multiagent
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - multiagent-network
+
+  backend:
+    build: .
+    container_name: multiagent-backend
+    environment:
+      - database_url=mysql+aiomysql://multiagent:multiagent@mysql:3306/multiagent
+      - deepseek-api-key=${DEEPSEEK_API_KEY}
+      - deepseek-api-base=${DEEPSEEK_API_BASE}
+      - deepseek-model-name=${DEEPSEEK_MODEL_NAME}
+      - secret_key=${SECRET_KEY}
+      - algorithm=HS256
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mysql
+    networks:
+      - multiagent-network
+
+volumes:
+  mysql_data:
+
+networks:
+  multiagent-network:
+    driver: bridge
