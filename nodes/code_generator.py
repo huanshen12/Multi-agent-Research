@@ -54,4 +54,8 @@ def code_generator_node(state: AgentState):
         "code_length": len(code)
     })
     
+<<<<<<< HEAD
     return {"code": code, "draft": code, "agent_history": history}
+=======
+    return {"code": code, "draft": code, "agent_history": history}
+>>>>>>> 904fced4bb476c788822e27e54df29628f8ac02e

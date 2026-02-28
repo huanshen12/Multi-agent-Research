@@ -154,4 +154,8 @@ async def get_report_detail(
                     "created_at": report.created_at.isoformat() if report.created_at else None
                 }
             }
+<<<<<<< HEAD
     return {"success": False, "message": "报告不存在"}
+=======
+    return {"success": False, "message": "报告不存在"}
+>>>>>>> 904fced4bb476c788822e27e54df29628f8ac02e

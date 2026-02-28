@@ -17,7 +17,11 @@ def tavily_search(query: str) -> list[str]:
         response = client.web_search.web_search(
         search_engine="search_std",
         search_query=query,
+<<<<<<< HEAD
         count=5,  # 返回结果的条数，范围1-50，默认5
+=======
+        count=10,  # 返回结果的条数，范围1-50，默认10
+>>>>>>> 904fced4bb476c788822e27e54df29628f8ac02e
         search_domain_filter=None,  # 只访问指定域名的内容
         search_recency_filter="noLimit",  # 搜索指定日期范围内的内容
         content_size="low"  # 控制网页摘要的字数，默认medium

@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
+<<<<<<< HEAD
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -8,6 +9,12 @@ import os
 
 # 数据库连接配置（从环境变量读取）
 DATABASE_URL = os.getenv("DATABASE_URL", "mysql+aiomysql://root:123456@localhost/agent_db")
+=======
+
+# 数据库连接配置
+
+DATABASE_URL = "mysql+aiomysql://root:123456@localhost/agent_db"
+>>>>>>> 904fced4bb476c788822e27e54df29628f8ac02e
 
 engine = create_async_engine(DATABASE_URL)
 AsyncSessionLocal = sessionmaker(
